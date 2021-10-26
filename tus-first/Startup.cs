@@ -5,7 +5,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.OpenApi.Models;
+using System;
 using System.Collections.Generic;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using tus_first.Services;
 using tusdotnet;
 using tusdotnet.Helpers;
@@ -23,6 +26,8 @@ namespace tus_first
         string _collectionName;
         string _tempDir;
         string _datasetDir;
+        string _tusDir;
+        string _apiAddress;
         public Startup(IConfiguration configuration)
         {
             Configuration = configuration;
@@ -35,6 +40,8 @@ namespace tus_first
         {
             services.AddCors();
             services.AddControllers();
+            _apiAddress = Configuration.GetValue<string>("API_ADDRESS");
+            _tusDir = Configuration.GetValue<string>("TUS_DIR");
             _tempDir = Configuration.GetValue<string>("TEMP_DIR");
             _datasetDir = Configuration.GetValue<string>("DATASET_DIR");
             var user = Configuration.GetValue<string>("DB_USER");
@@ -45,7 +52,12 @@ namespace tus_first
             _collectionName = Configuration.GetValue<string>("COLLECTION_NAME");
             var tempDir = Configuration.GetValue<string>("TEMP_DIR");
             services.AddHostedService<QueueService>(serviceProvider => new QueueService(_connString, _dbname, _collectionName, tempDir));
-   
+
+
+            services.AddSwaggerGen(c =>
+            {
+                c.SwaggerDoc("v1", new OpenApiInfo { Title = "NAVIAISharp.WebApi.Servers.Training", Version = "v1" });
+            });
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -63,8 +75,8 @@ namespace tus_first
             if (env.IsDevelopment())
             {
                 app.UseDeveloperExceptionPage();
-                //app.UseSwagger();
-                //app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "tus_first v1"));
+                app.UseSwagger();
+                app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "tus_first v1"));
             }
 
             app.UseHttpsRedirection();
@@ -72,17 +84,41 @@ namespace tus_first
                 .AllowAnyHeader()
                 .AllowAnyMethod()
                 .AllowAnyOrigin()
+                //.AllowCredentials()
+                .WithExposedHeaders("file-name")
                 .WithExposedHeaders(CorsHelper.GetExposedHeaders()));
 
             app.UseTus(httpContext => new DefaultTusConfiguration
             {
-                Store = new TusDiskStore(@"D:\tusfiles\"),
+                Store = new TusDiskStore(_tusDir),
                 UrlPath = "/files",
                 Events = new Events
                 {
+                    OnBeforeCreateAsync = async eventContext =>
+                    {
+                        string acceessToken = eventContext.Metadata["access_token"].GetString(System.Text.Encoding.UTF8);
+                        try
+                        {
+                            using (var client = new HttpClient())
+                            {
+                                client.BaseAddress = new Uri($"{_apiAddress}");
+                                client.DefaultRequestHeaders.Accept.Clear();
+                                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", acceessToken);
+                                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                                var response = client.GetAsync("user/confirm").Result;
+                                if (response.StatusCode != System.Net.HttpStatusCode.OK)
+                                    throw new Exception("invalid token");
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            eventContext.FailRequest(e.Message);
+                        }
+                    },
 
                     OnFileCompleteAsync = async eventContext =>
                     {
+                        System.Console.WriteLine("upload complete!");
                         // eventContext.FileId is the id of the file that was uploaded.
                         // eventContext.Store is the data store that was used (in this case an instance of the TusDiskStore)
 
@@ -92,7 +128,7 @@ namespace tus_first
                         Dictionary<string, Metadata> metadata = await file.GetMetadataAsync(eventContext.CancellationToken);
                         string zipfileName = System.IO.Path.GetFileNameWithoutExtension(metadata["filename"].GetString(System.Text.Encoding.UTF8));
 
-                        var orgPath = System.IO.Path.Combine(@"D:\tusfiles\", file.Id);
+                        var orgPath = System.IO.Path.Combine(_tusDir, file.Id);
                         var dstPath = $"{orgPath}.zip";
                         if (System.IO.File.Exists(orgPath))
                         {
@@ -110,6 +146,7 @@ namespace tus_first
                             outputDir = System.IO.Path.Combine(_datasetDir, zipfileName),
                             status = Models.Status.Ready,
                         });
+                        System.Console.WriteLine("DB status ready!");
 
                         //var result = await DoSomeProcessing(file, eventContext.CancellationToken).ConfigureAwait(false);
 

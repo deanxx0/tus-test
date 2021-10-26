@@ -54,12 +54,21 @@ namespace tus_first.Services
             var filter = Builders<Item>.Filter.Eq("Id", id);
             var update = Builders<Item>.Update.Set(x => x.status, status);
             GetDB().GetCollection<Item>(_collectionName).UpdateOne(filter, update);
+            System.Console.WriteLine($"DB status {status}!");
         }
 
         private void CopyFiles(string tempDir, string dstDir)
         {
+
+
             if (!Directory.Exists(dstDir))
                 Directory.CreateDirectory(dstDir);
+
+            else
+            {
+                Directory.Delete(dstDir, true);
+                Directory.CreateDirectory(dstDir);
+            }
 
             string imgDir = Path.Combine(dstDir, "images");
             if (!Directory.Exists(imgDir))
@@ -108,6 +117,8 @@ namespace tus_first.Services
             }
             File.Copy(labellist, Path.Combine(dstDir, "label_val.txt"));
             File.Copy(imglist, Path.Combine(dstDir, "img_val.txt"));
+
+            System.Console.WriteLine("convert and copy complete on datasets_dir!");
         }
 
         private string GetImgPath(string itemPath, string outputDir)
@@ -134,7 +145,11 @@ namespace tus_first.Services
                 Directory.CreateDirectory(output_path);
 
             else
-                return;
+            {
+                Directory.Delete(output_path, true);
+                Directory.CreateDirectory(output_path);
+            }
+                
 
             using (FileStream fs = new FileStream(zipfile, FileMode.Open))
             {
@@ -152,11 +167,13 @@ namespace tus_first.Services
                         if (!Directory.Exists(dirname))
                             Directory.CreateDirectory(dirname);
 
-                        if(path != dirname + '/')
+                        if (path != dirname + '/')
                             entry.ExtractToFile(path);
                     }
                 }
             }
+
+            System.Console.WriteLine("extract complete on temp_dir!");
         }
 
         private Item GetItem()
